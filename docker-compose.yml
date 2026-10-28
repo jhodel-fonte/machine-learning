@@ -1,3 +1,5 @@
+version: '3.8'
+
 services:
   recommender-api:
     build: .
@@ -33,6 +35,9 @@ services:
     environment:
       DB_HOST: ${DB_HOST_CONTAINER:-host.docker.internal}
     command: python auto_train.py
-  networks:
-      pgpc-internal:
-        external: true
+    networks:
+      - pgpc-internal
+
+networks:
+  pgpc-internal:
+    external: true
