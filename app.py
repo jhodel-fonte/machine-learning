@@ -73,6 +73,11 @@ def request_too_large(_error):
     return jsonify({"error": "Request body is too large"}), 413
 
 
+@app.route('/health', methods=['GET'])
+def health():
+    return jsonify({"status": "ok"}), 200
+
+
 def get_database_connection():
     return psycopg2.connect(
         host=os.getenv('DB_HOST', 'localhost'),

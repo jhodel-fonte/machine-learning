@@ -21,7 +21,8 @@ def run():
     }
     if not enabled:
         print("Automatic training is disabled (AUTO_TRAIN_ENABLED=false).")
-        return
+        while True:
+            time.sleep(3600)
 
     schedule_time = os.getenv("AUTO_TRAIN_TIME", "00:00").strip()
     try:

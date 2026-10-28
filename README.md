@@ -41,6 +41,11 @@ PostgreSQL container's Compose service name, such as `postgres`. The Compose
 file uses `DB_HOST_CONTAINER` only inside containers; `DB_HOST` remains
 available for direct Python execution.
 
+The Compose file maps host port `8005` to the container's internal port `5000`
+by default. Change `ML_API_PORT` if needed. Other containers must still use
+`http://recommender-api:5000`; only requests from the host use
+`http://localhost:8005`.
+
 Generated files such as `library_svd_model.pkl`, `testset.pkl`,
 `all_books.json`, and `model_metrics.json` are intentionally excluded from
 Git and the Docker build context. Train the model before starting the API, or
@@ -80,10 +85,11 @@ docker compose up -d recommender-api
 ```
 
 For scheduled training at midnight, set `AUTO_TRAIN_ENABLED=true`,
-`AUTO_TRAIN_TIME=00:00`, and the VM timezone in `.env`, then run:
+`AUTO_TRAIN_TIME=00:00`, and the VM timezone in `.env`, then recreate the
+stack:
 
 ```bash
-docker compose --profile autotrain up -d recommender-api recommender-trainer
+docker compose up -d --force-recreate recommender-api recommender-trainer
 ```
 
 For Philippine time, use:
@@ -97,6 +103,21 @@ AUTO_TRAIN_TIMEZONE=Asia/Manila
 The trainer waits for the next configured midnight before training; it does
 not train immediately when the container starts. Use an IANA timezone such as
 `UTC`, `Asia/Manila`, or `America/New_York`.
+
+Both the API and trainer are included in the default Compose startup:
+
+```bash
+docker compose up -d --build
+```
+
+When `AUTO_TRAIN_ENABLED=false`, the trainer starts and remains idle. This
+keeps the complete stack represented in Compose without unexpected training.
+If you change the training setting, recreate the trainer so it receives the
+updated environment:
+
+```bash
+docker compose up -d --force-recreate recommender-trainer
+```
 
 ### Separate PostgreSQL container on the Azure VM
 
@@ -153,7 +174,7 @@ Copy `.env.example` to `.env` and set a long random `API_KEY`. Every
 `/api/*` endpoint requires that key:
 
 ```powershell
-curl -H "X-API-Key: your-secret-key" http://localhost:5000/api/metrics
+curl -H "X-API-Key: your-secret-key" http://localhost:8005/api/metrics
 ```
 
 Requests without the key receive `401`. Repeated requests are limited by
@@ -168,7 +189,7 @@ set `AUTO_TRAIN_ENABLED=true` and choose `AUTO_TRAIN_TIME` and
 start the Compose profile:
 
 ```powershell
-docker compose --profile autotrain up -d recommender-trainer
+docker compose up -d recommender-trainer
 ```
 
 The trainer refreshes `user_histories`, trains the SVD model, and waits for
