@@ -16,6 +16,8 @@ services:
       FLASK_DEBUG: "0"
       DB_HOST: ${DB_HOST_CONTAINER:-host.docker.internal}
     command: gunicorn --bind 0.0.0.0:5000 --timeout ${REQUEST_TIMEOUT_SECONDS:-30} app:app
+    networks:
+      - pgpc-internal
 
   recommender-trainer:
     build: .
@@ -31,3 +33,6 @@ services:
     environment:
       DB_HOST: ${DB_HOST_CONTAINER:-host.docker.internal}
     command: python auto_train.py
+  networks:
+      pgpc-internal:
+        external: true
