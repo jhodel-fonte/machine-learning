@@ -1,0 +1,33 @@
+services:
+  recommender-api:
+    build: .
+    container_name: pgpc_ml_api
+    working_dir: /app
+    ports:
+      - "5000:5000"
+    volumes:
+      - .:/app
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    env_file:
+      - .env
+    environment:
+      FLASK_APP: app
+      FLASK_DEBUG: "0"
+      DB_HOST: ${DB_HOST_CONTAINER:-host.docker.internal}
+    command: gunicorn --bind 0.0.0.0:5000 --timeout ${REQUEST_TIMEOUT_SECONDS:-30} app:app
+
+  recommender-trainer:
+    build: .
+    profiles:
+      - autotrain
+    working_dir: /app
+    volumes:
+      - .:/app
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    env_file:
+      - .env
+    environment:
+      DB_HOST: ${DB_HOST_CONTAINER:-host.docker.internal}
+    command: python auto_train.py

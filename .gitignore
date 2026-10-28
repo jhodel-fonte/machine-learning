@@ -1,0 +1,5 @@
+.env
+# Generated model and evaluation artifacts
+*.pkl
+all_books.json
+model_metrics.json
