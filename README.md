@@ -210,9 +210,9 @@ from `user_histories`. It never selects or exports `user_id`. Rows without an
 `encrypter_id` are excluded. Ratings are interpreted as `0` (no interaction),
 `1` (view), and `2` (borrowed).
 
-The snapshot refuses to replace an existing dataset when the table is empty.
-This protects the training data if the wrong database or an unseeded database
-is configured. Use `--allow-empty` only when an empty dataset is intentional.
+The snapshot preserves existing rows in `interactions.csv` and adds only
+database rows that are not already present. If the table is empty, the
+existing CSV is left unchanged.
 
 Run these commands from this directory after the PostgreSQL settings are in
 `.env`:

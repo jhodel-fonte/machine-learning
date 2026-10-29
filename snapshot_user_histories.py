@@ -41,22 +41,38 @@ def snapshot_user_histories(allow_empty: bool = False) -> int:
             )
             rows = cursor.fetchall()
 
-    if not rows and not allow_empty:
-        raise RuntimeError(
-            "user_histories returned 0 rows; existing interactions.csv was left unchanged. "
-            "Use --allow-empty only if an empty training dataset is intentional."
-        )
+    existing_rows = []
+    if OUTPUT_PATH.exists():
+        with OUTPUT_PATH.open(newline="", encoding="utf-8") as existing_file:
+            reader = csv.DictReader(existing_file)
+            expected_fields = ["User-ID", "ISBN", "rating"]
+            if reader.fieldnames != expected_fields:
+                raise ValueError(
+                    f"{OUTPUT_PATH} must contain columns: {', '.join(expected_fields)}"
+                )
+            existing_rows = [
+                (row["User-ID"], row["ISBN"], row["rating"]) for row in reader
+            ]
+
+    existing_keys = set(existing_rows)
+    new_rows = []
+    for user_id, isbn, rating in rows:
+        normalized_row = (str(user_id), str(isbn), str(rating))
+        if normalized_row not in existing_keys:
+            new_rows.append(normalized_row)
+            existing_keys.add(normalized_row)
+    merged_rows = existing_rows + new_rows
 
     with tempfile.NamedTemporaryFile(
         mode="w", newline="", encoding="utf-8", dir=OUTPUT_PATH.parent, delete=False
     ) as temporary_file:
         writer = csv.writer(temporary_file)
         writer.writerow(["User-ID", "ISBN", "rating"])
-        writer.writerows(rows)
+        writer.writerows(merged_rows)
         temporary_path = Path(temporary_file.name)
 
     temporary_path.replace(OUTPUT_PATH)
-    return len(rows)
+    return len(new_rows)
 
 
 if __name__ == "__main__":
@@ -67,4 +83,4 @@ if __name__ == "__main__":
         help="Write an empty CSV when user_histories has no rows.",
     )
     count = snapshot_user_histories(allow_empty=parser.parse_args().allow_empty)
-    print(f"Saved {count} user histories to {OUTPUT_PATH}")
+    print(f"Added {count} new user histories to {OUTPUT_PATH}")
