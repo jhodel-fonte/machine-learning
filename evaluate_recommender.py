@@ -1,12 +1,15 @@
 import json
 import math
 import pickle
+from datetime import datetime, timezone
 from pathlib import Path
 
 import numpy as np
 from surprise import accuracy, dump
 
 BASE_DIR = Path(__file__).resolve().parent
+METRICS_PATH = BASE_DIR / "model_metrics.json"
+METRICS_HISTORY_PATH = BASE_DIR / "model_metrics_history.jsonl"
 
 
 def describe(values):
@@ -93,6 +96,7 @@ def evaluate_model():
     ndcg_statistics = describe(ndcg_scores)
 
     metrics = {
+        "evaluated_at": datetime.now(timezone.utc).isoformat(),
         "evaluation": {
             "test_interactions": len(predictions),
             "test_users": len({str(prediction.uid) for prediction in predictions}),
@@ -108,8 +112,12 @@ def evaluate_model():
         "conclusion": build_conclusion(mae, ndcg_statistics["mean"] or 0.0),
     }
     
-    with open(BASE_DIR / 'model_metrics.json', 'w') as f:
+    with open(METRICS_PATH, 'w', encoding='utf-8') as f:
         json.dump(metrics, f, indent=2)
+
+    # Keep an append-only record so later evaluations never erase prior results.
+    with open(METRICS_HISTORY_PATH, 'a', encoding='utf-8') as history_file:
+        history_file.write(json.dumps(metrics, separators=(",", ":")) + "\n")
         
     print(
         "Metrics saved to model_metrics.json -> "

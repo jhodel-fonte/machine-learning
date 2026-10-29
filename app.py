@@ -11,6 +11,7 @@ from dotenv import load_dotenv
 from werkzeug.exceptions import RequestEntityTooLarge
 
 from score_svd_recommender import get_top_recommendations
+from evaluate_recommender import METRICS_HISTORY_PATH
 
 load_dotenv()
 
@@ -132,6 +133,20 @@ def get_metrics():
         return jsonify(metrics), 200
     
     return jsonify({"error": "Metrics not found. Run evaluate_recommender.py first."}), 404
+
+
+@app.route('/api/metrics/history', methods=['GET'])
+def get_metrics_history():
+    if not METRICS_HISTORY_PATH.exists():
+        return jsonify({"history": []}), 200
+
+    history = []
+    with METRICS_HISTORY_PATH.open(encoding='utf-8') as history_file:
+        for line in history_file:
+            if line.strip():
+                history.append(json.loads(line))
+
+    return jsonify({"history": list(reversed(history))}), 200
 
 if __name__ == '__main__':
     # Listen on all interfaces (0.0.0.0) so Docker can map the port

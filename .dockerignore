@@ -6,3 +6,4 @@ library_svd_model.pkl
 testset.pkl
 all_books.json
 model_metrics.json
+model_metrics_history.jsonl

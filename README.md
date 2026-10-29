@@ -239,7 +239,11 @@ The API reads those files when `POST /api/recommend` is called:
 }
 ```
 
-`evaluate_recommender.py` writes `model_metrics.json` with RMSE and MAE,
+`evaluate_recommender.py` writes the latest metrics to `model_metrics.json`
+and appends every evaluation to `model_metrics_history.jsonl`, so rerunning
+the model does not delete previous evaluation results. The API exposes the
+latest result at `/api/metrics` and the complete newest-first history at
+`/api/metrics/history`. Each history record includes RMSE and MAE,
 sample counts, mean/median/min/max/standard deviation for actual ratings,
 predicted ratings, and absolute errors, NDCG@10 ranking statistics, and a
 generated conclusion. NDCG@10 is calculated
