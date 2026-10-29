@@ -244,6 +244,7 @@ and appends every evaluation to `model_metrics_history.jsonl`, so rerunning
 the model does not delete previous evaluation results. The API exposes the
 latest result at `/api/metrics` and the complete newest-first history at
 `/api/metrics/history`. Each history record includes RMSE and MAE,
+the total number of interactions and unique users used to train the model,
 sample counts, mean/median/min/max/standard deviation for actual ratings,
 predicted ratings, and absolute errors, NDCG@10 ranking statistics, and a
 generated conclusion. NDCG@10 is calculated

@@ -1,3 +1,4 @@
+import csv
 import json
 import math
 import pickle
@@ -10,6 +11,7 @@ from surprise import accuracy, dump
 BASE_DIR = Path(__file__).resolve().parent
 METRICS_PATH = BASE_DIR / "model_metrics.json"
 METRICS_HISTORY_PATH = BASE_DIR / "model_metrics_history.jsonl"
+DATASET_PATH = BASE_DIR / "dataset" / "interactions.csv"
 
 
 def describe(values):
@@ -74,6 +76,21 @@ def build_conclusion(mae, ndcg_mean):
     return f"{error_conclusion} {ranking_conclusion}"
 
 
+def get_training_data_summary():
+    with DATASET_PATH.open(newline="", encoding="utf-8") as dataset_file:
+        reader = csv.DictReader(dataset_file)
+        interaction_count = 0
+        users = set()
+        for row in reader:
+            interaction_count += 1
+            users.add(row["User-ID"])
+
+    return {
+        "training_interactions": interaction_count,
+        "training_users": len(users),
+    }
+
+
 def evaluate_model():
     print("Loading saved model and test data...")
     try:
@@ -94,9 +111,11 @@ def evaluate_model():
     predicted_ratings = [prediction.est for prediction in predictions]
     ndcg_scores = calculate_ndcg(predictions)
     ndcg_statistics = describe(ndcg_scores)
+    training_data = get_training_data_summary()
 
     metrics = {
         "evaluated_at": datetime.now(timezone.utc).isoformat(),
+        "training_data": training_data,
         "evaluation": {
             "test_interactions": len(predictions),
             "test_users": len({str(prediction.uid) for prediction in predictions}),
