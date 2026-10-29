@@ -29,8 +29,9 @@ def train_model(refresh_database: bool = False):
     reader = Reader(rating_scale=(0, 2))
     data = Dataset.load_from_df(df[['User-ID', 'ISBN', 'rating']], reader)
 
-    print("Splitting data (80/20) and applying random seed 7...")
-    trainset, testset = train_test_split(data, test_size=0.20, random_state=7)
+
+    print("Splitting data (80/20) and applying random seed 0...")
+    trainset, testset = train_test_split(data, test_size=0.20, random_state=0)
 
     print("Training SVD Model...")
     algo = SVD(random_state=7)
