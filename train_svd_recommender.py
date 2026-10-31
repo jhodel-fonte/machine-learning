@@ -1,33 +1,44 @@
 import argparse
 import json
+import os
 import pickle
 from pathlib import Path
 
 import pandas as pd
+from dotenv import load_dotenv
+from snapshot_user_histories import get_database_connection, snapshot_user_histories
 from surprise import Dataset, Reader, SVD, dump
 from surprise.model_selection import train_test_split
-from snapshot_user_histories import snapshot_user_histories
 
 BASE_DIR = Path(__file__).resolve().parent
 
 
 def train_model(refresh_database: bool = False):
+    load_dotenv(BASE_DIR / ".env")
     if refresh_database:
-        print("Snapshotting user_histories from PostgreSQL...")
+        print("Refreshing catalog and borrowing statistics from PostgreSQL...")
         snapshot_user_histories()
 
-    dataset_path = BASE_DIR / "dataset" / "interactions.csv"
-    print(f"Loading data from {dataset_path}...")
-    df = pd.read_csv(dataset_path)
-    required_columns = {"User-Key", "ISBN", "rating"}
-    missing_columns = required_columns.difference(df.columns)
-    if missing_columns:
-        raise ValueError(f"Dataset is missing columns: {sorted(missing_columns)}")
+    print("Loading interactions from PostgreSQL...")
+    include_seeded = os.getenv("ML_INCLUDE_SEEDED_DATA", "false").strip().lower() in {
+        "1", "true", "yes",
+    }
+    with get_database_connection() as connection:
+        df = pd.read_sql_query(
+            """SELECT accounts.ml_user_token AS user_key, btrim(histories.isbn) AS isbn, histories.rating
+               FROM user_histories histories JOIN accounts ON accounts.id = histories.user_id
+               WHERE accounts.ml_user_token IS NOT NULL AND btrim(accounts.ml_user_token) <> ''
+                 AND (histories.is_seeded = FALSE OR %s)
+                 AND histories.isbn IS NOT NULL AND btrim(histories.isbn) <> ''
+               ORDER BY histories.id""",
+            connection,
+            params=(include_seeded,),
+        )
     if df.empty:
         raise ValueError("Dataset contains no interactions.")
 
     reader = Reader(rating_scale=(0, 2))
-    data = Dataset.load_from_df(df[['User-Key', 'ISBN', 'rating']], reader)
+    data = Dataset.load_from_df(df[['user_key', 'isbn', 'rating']], reader)
 
 
     print("Splitting data (80/20) and applying random seed 0...")
@@ -47,7 +58,7 @@ def train_model(refresh_database: bool = False):
         
     # Save a master list of all unique books 
     with open(BASE_DIR / 'all_books.json', 'w') as f:
-        json.dump(df['ISBN'].unique().tolist(), f)
+        json.dump(df['isbn'].unique().tolist(), f)
 
     print("Training complete!")
 
@@ -56,6 +67,6 @@ if __name__ == '__main__':
     parser.add_argument(
         "--refresh-database",
         action="store_true",
-        help="Replace interactions.csv with user_histories before training.",
+        help="Refresh catalog embeddings and borrowing statistics before training.",
     )
     train_model(refresh_database=parser.parse_args().refresh_database)

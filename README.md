@@ -104,32 +104,21 @@ with a 30-second worker timeout by default.
 
 ## PostgreSQL snapshot and recommender
 
-The model uses `dataset/interactions.csv` with these columns:
+The model reads interactions directly from PostgreSQL `user_histories`, joined
+to accounts for their random 256-bit `ml_user_token`. Numeric account IDs and
+legacy `encrypter_id` values are not given to SVD. Ratings are `1` (view) and
+`2` (borrowed). Generated seeder rows are marked `is_seeded` and excluded from
+training by default; set `ML_INCLUDE_SEEDED_DATA=true` only for a local/demo
+model. No interaction CSV is used. Real checkout transactions now update the
+student's borrowed rating, while inside-library use is excluded.
 
-```text
-User-Key,ISBN,rating
-```
-
-Each `User-Key` is a random 256-bit token stored on the Laravel account. The
-interaction snapshot exports no account ID or legacy `encrypter_id`. The
-cohort query uses user IDs only inside a distinct-student count to enforce its
-three-student minimum; it exports aggregates, not those IDs. A token is stable
-for one account, so SVD can recognize repeat interactions without receiving
-a database identifier. Ratings are `0` (no interaction), `1` (view), and
-`2` (borrowed).
-
-The database snapshot is the source of truth and replaces the training CSV,
-so existing histories are re-keyed together during token migration. If the
-database returns no interactions, snapshotting fails and leaves the old file
-untouched; `--allow-empty` explicitly writes an empty CSV. The ML service
-never reads legacy identifiers to perform the migration.
-
-The same snapshot streams catalog metadata from the library database in
-batches of 128 and writes 384-dimensional embeddings to the PostgreSQL table
-`ml_book_embeddings`. It hashes each record and only re-embeds records whose
-metadata changed, then removes records no longer in the catalog. No full
-catalog JSON or in-memory embedding matrix is created. The HNSW index returns
-the nearest books without loading the catalog into Python memory.
+The same refresh streams catalog metadata from the library database in batches
+of 128 and writes 384-dimensional embeddings to `ml_book_embeddings`. It
+embeds titles, subtitles, descriptions, notes, Library of Congress
+classification, call numbers, categories, subjects, and authors. It hashes
+each record and only re-embeds records whose metadata changed, then removes
+records no longer in the catalog. The HNSW index retrieves nearby titles for
+personal content matching.
 
 For a large catalog, set `ML_INDEX_DB_DATABASE` and its related `ML_INDEX_DB_*`
 settings to a dedicated PostgreSQL database to isolate search storage and
@@ -139,9 +128,15 @@ available to the ML database user. The metadata sent to the encoder is still
 catalog metadata (title, description, subjects, categories, and authors); this
 does not ingest or index the full contents of book files.
 
-The snapshot also builds `cohort_preferences.json` from interactions grouped
-by program/year. Cohort ISBN scores are exported only when at least three
-distinct students share that program, year, and ISBN.
+The refresh also builds `ml_book_year_stats` and `ml_book_popularity` in the
+ML index database. They use distinct students with checkout transactions in
+the past year; inside-library use is excluded. Year/program statistics require
+at least three student borrowers and compare a smoothed group borrowing share
+with the share among other groups. Confidence is `borrowers / (borrowers + 10)`.
+Only transactions with program/year snapshots are used for group statistics;
+new checkouts save those snapshots so later changes to a student's profile do
+not relabel old loans. The separate `ml_book_popularity` table supports a
+small novelty quota from less-borrowed titles.
 
 `POST /api/search` uses `sentence-transformers/all-MiniLM-L6-v2` embeddings and
 cosine similarity to return semantic matches. Example body:
@@ -155,7 +150,8 @@ existing database search as a fallback when the ML API is unavailable. The
 installer downloads the embedding model into `/var/cache/pgpc-ml/huggingface`.
 
 Run these commands from this directory after the PostgreSQL settings are in
-`.env`:
+`.env`. Apply the Laravel migrations first so checkout snapshots and the
+`is_seeded` history flag exist:
 
 ```powershell
 python snapshot_user_histories.py
@@ -180,19 +176,25 @@ The API reads those files when `POST /api/recommend` is called:
 }
 ```
 
-Recommendation scores use the existing SVD collaborative-filtering estimate,
-blended 70/30 with the matching program/year cohort's mean interaction rating
-when a cohort score exists. Otherwise SVD remains the score. Student profile
-fields are sent by Laravel only for recommendation requests and are not added
-to the interaction export; cohort data is aggregate-only.
+Recommendation ranking combines SVD (50%), similarity to the student's
+interaction metadata profile (30%), and year/program borrowing relevance
+(20%); missing signals are renormalized. Borrowed books weigh twice as much as
+views in the content profile. Up to 30% of the results may be less-borrowed
+titles, provided their relevance is close to the best candidates. Current
+available-copy count is a tie-breaker and is returned with each result. Laravel
+loads the live count again for display. The response keeps the existing ISBN
+and `predicted_score` fields and adds `available_copies`.
 
 For the identity migration, first run Laravel's `php artisan migrate` so each
 account gets its random token. Then rebuild the model with
 `python train_svd_recommender.py --refresh-database` before routing requests to
-the updated Laravel and ML services. This reloads current histories under the
+the updated Laravel and ML services. This reads current histories under the
 new token and keeps each active student's SVD history together.
+Historical loans created before the checkout snapshot migration have no
+program/year-at-issue values, so they don't contribute to year-level scores.
 
-`evaluate_recommender.py` writes the latest metrics to `model_metrics.json`
+`evaluate_recommender.py` writes the latest SVD holdout metrics and per-signal
+comparisons to `model_metrics.json`
 and appends every evaluation to `model_metrics_history.jsonl`, so rerunning
 the model does not delete previous evaluation results. The API exposes the
 latest result at `/api/metrics` and the complete newest-first history at
@@ -200,9 +202,18 @@ latest result at `/api/metrics` and the complete newest-first history at
 the total number of interactions and unique users used to train the model,
 sample counts, mean/median/min/max/standard deviation for actual ratings,
 predicted ratings, and absolute errors, NDCG@10 ranking statistics, and a
-generated conclusion. NDCG@10 is calculated
-per user from the held-out test interactions, using the true interaction
-rating as relevance and the predicted score as the ranking score.
+generated conclusion. `signal_evaluation` reports RMSE, MAE, and NDCG@10 for
+SVD, borrowed-book content similarity, program/year relevance, and the serving
+hybrid score on the same held-out interactions. It also reports coverage for
+content/year scores and popularity/availability lookups. Popularity and
+availability are ranking adjustments in serving, not separate trained models,
+so they are coverage diagnostics rather than rating predictors. These metrics
+are diagnostic only: the random holdout contains observed interactions but no
+impressions or sampled unborrowed books, so they do not measure online top-N
+recommendation quality. Year/program statistics are read from the current
+index and can include interactions that also appear in the holdout.
+NDCG@10 is calculated per user from held-out interactions, using the true
+interaction rating as relevance and the signal score as ranking score.
 
 Run the snapshot and training commands from this directory with the venv:
 
