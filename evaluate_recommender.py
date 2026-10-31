@@ -44,7 +44,7 @@ def describe(values):
 def calculate_ndcg(predictions, top_n=10):
     by_user = {}
     for prediction in predictions:
-        if isinstance(prediction, tuple):
+        if not hasattr(prediction, "est"):
             uid, actual, score = prediction
             by_user.setdefault(str(uid), []).append((float(actual), float(score)))
         else:
