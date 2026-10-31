@@ -28,7 +28,7 @@ chown -R pgpc-ml:pgpc-ml "$APP_DIR" /var/cache/pgpc-ml
 chmod 640 "$APP_DIR/.env"
 
 python3 -m venv "$APP_DIR/.venv"
-"$APP_DIR/.venv/bin/python" -m pip install --upgrade pip
+"$APP_DIR/.venv/bin/python" -m pip install --upgrade pip setuptools wheel
 "$APP_DIR/.venv/bin/python" -m pip install numpy==1.26.4
 "$APP_DIR/.venv/bin/python" -m pip install --no-build-isolation -r requirements.txt
 
