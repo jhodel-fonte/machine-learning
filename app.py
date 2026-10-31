@@ -10,7 +10,7 @@ import psycopg2
 from dotenv import load_dotenv
 from werkzeug.exceptions import RequestEntityTooLarge
 
-from score_svd_recommender import get_top_recommendations
+from score_svd_recommender import get_top_recommendations, search_books
 from evaluate_recommender import METRICS_HISTORY_PATH
 
 load_dotenv()
@@ -104,25 +104,57 @@ def database_health():
 
 @app.route('/api/recommend', methods=['POST'])
 def recommend():
-    data = request.get_json(silent=True) or {}
-    encrypter_id = data.get('encrypter_id')
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({"error": "JSON object body is required"}), 400
+    user_key = data.get('user_key')
     borrowed_books = data.get('borrowed_books', []) 
 
-    if not encrypter_id:
-        return jsonify({"error": "encrypter_id is required"}), 400
+    if not isinstance(user_key, str) or not user_key or len(user_key) > 128:
+        return jsonify({"error": "user_key is required"}), 400
     if not isinstance(borrowed_books, list):
         return jsonify({"error": "borrowed_books must be an array"}), 400
 
     # Call the scoring script
-    top_10 = get_top_recommendations(encrypter_id, borrowed_books, top_n=10)
+    student_context = data.get('student_context', {})
+    if not isinstance(student_context, dict):
+        return jsonify({"error": "student_context must be an object"}), 400
+    program = student_context.get('program')
+    year_level = student_context.get('year_level')
+    if any(value is not None and (not isinstance(value, str) or len(value) > 100) for value in (program, year_level)):
+        return jsonify({"error": "student_context program and year_level must be strings of 100 characters or fewer"}), 400
+
+    top_10 = get_top_recommendations(
+        user_key, borrowed_books, top_n=10, program=program, year_level=year_level
+    )
     
     if isinstance(top_10, dict) and "error" in top_10:
         return jsonify(top_10), 500
 
     return jsonify({
-        "encrypter_id": encrypter_id,
         "recommendations": top_10
     }), 200
+
+
+@app.route('/api/search', methods=['POST'])
+def search():
+    data = request.get_json(silent=True)
+    if not isinstance(data, dict):
+        return jsonify({"error": "JSON object body is required"}), 400
+    query = data.get('query')
+    if not isinstance(query, str) or not query.strip():
+        return jsonify({"error": "query must be a non-empty string"}), 400
+    if len(query) > 500:
+        return jsonify({"error": "query must be 500 characters or fewer"}), 400
+
+    top_n = data.get('top_n', 10)
+    if type(top_n) is not int or not 1 <= top_n <= 100:
+        return jsonify({"error": "top_n must be an integer from 1 to 100"}), 400
+
+    results = search_books(query.strip(), top_n=top_n)
+    if isinstance(results, dict) and "error" in results:
+        return jsonify(results), 503
+    return jsonify({"query": query.strip(), "results": results}), 200
 
 @app.route('/api/metrics', methods=['GET'])
 def get_metrics():

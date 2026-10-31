@@ -1,98 +1,71 @@
 # machine-learning
 
-## Azure Docker deployment
+## Ubuntu Azure VM deployment (native Python, no Docker)
 
-This service can be deployed as a Docker container to Azure App Service for
-Containers, Azure Container Apps, or Azure Container Instances. Build and push
-the image to Azure Container Registry:
+Laravel and this ML API run directly on the same Ubuntu VM. Systemd keeps the
+API and scheduled trainer running as the restricted `pgpc-ml` account. The API
+listens only on `127.0.0.1:8005`, which Laravel can call locally; do not open
+port 8005 in the Azure Network Security Group.
 
-```powershell
-az acr build --registry <registry-name> --image recommender-api:latest .
-```
-
-Deploy the image to an Azure container service and configure these environment
-variables in the Azure portal or deployment command:
-
-```text
-environment
-API_KEY
-DB_HOST
-DB_PORT
-DB_DATABASE
-DB_USERNAME
-DB_PASSWORD
-RATE_LIMIT_REQUESTS
-RATE_LIMIT_WINDOW_SECONDS
-MAX_REQUEST_BYTES
-REQUEST_TIMEOUT_SECONDS
-AUTO_TRAIN_ENABLED
-AUTO_TRAIN_TIME
-AUTO_TRAIN_TIMEZONE
-```
-
-Do not upload `.env` to the image or commit it to Git. Store credentials in
-Azure Key Vault or the service's managed secret settings.
-
-Use `environment=local` with `DB_HOST=localhost` when running the Python
-service directly on your development machine. For local Docker, set
-`DB_HOST_CONTAINER=host.docker.internal`. For Docker on the Azure VM, set
-`environment=production` (or `azure`) and set `DB_HOST_CONTAINER` to the
-PostgreSQL container's Compose service name, such as `postgres`. The Compose
-file uses `DB_HOST_CONTAINER` only inside containers; `DB_HOST` remains
-available for direct Python execution.
-
-The Compose file maps host port `8005` to the container's internal port `5000`
-by default. Change `ML_API_PORT` if needed. Other containers must still use
-`http://recommender-api:5000`; only requests from the host use
-`http://localhost:8005`.
-
-Generated files such as `library_svd_model.pkl`, `testset.pkl`,
-`all_books.json`, and `model_metrics.json` are intentionally excluded from
-Git and the Docker build context. Train the model before starting the API, or
-store/download these artifacts from durable storage such as Azure Blob
-Storage during deployment. The API container is stateless and its bind mount
-in `docker-compose.yml` is intended for local development only.
-
-### Ubuntu Azure VM with Docker Compose
-
-For an Ubuntu VM, the API and trainer are separate containers intentionally:
-
-- `recommender-api` serves requests and loads the trained model.
-- `recommender-trainer` refreshes data, trains the model, evaluates it, and
-  then sleeps until the next interval.
-- A slow training job therefore does not block recommendation requests.
-
-They can still access the same model. In the current Compose configuration,
-both services mount the same VM directory at `/app`. The trainer writes
-`library_svd_model.pkl`, `all_books.json`, and `model_metrics.json` into that
-directory, and the API reads those files from the same directory. Training
-should be allowed to finish before the API starts. For zero-downtime
-production updates, publish versioned model artifacts to durable storage and
-switch the API to a completed version instead of replacing files in place.
-
-On the VM:
+Clone this repository to `/opt/machine_learning`, then configure its secrets
+and database connections:
 
 ```bash
-git clone <repository-url> machine_learning
-cd machine_learning
-cp .env.example .env
-nano .env
-docker compose build
-docker compose run --rm recommender-trainer python snapshot_user_histories.py
-docker compose run --rm recommender-trainer python train_svd_recommender.py
-docker compose run --rm recommender-trainer python evaluate_recommender.py
-docker compose up -d recommender-api
+sudo git clone <repository-url> /opt/machine_learning
+cd /opt/machine_learning
+sudo cp .env.example .env
+sudo nano .env
 ```
 
-For scheduled training at midnight, set `AUTO_TRAIN_ENABLED=true`,
-`AUTO_TRAIN_TIME=00:00`, and the VM timezone in `.env`, then recreate the
-stack:
+Set `DB_*` to the main PostgreSQL database used by Laravel and set `API_KEY`
+to a long random secret. The service runs natively, so use the database's real
+hostname (for PostgreSQL on this same VM, `DB_HOST=localhost`). To keep the
+large book search index off the main database, set all `ML_INDEX_DB_*` values
+to the separate PostgreSQL database. It needs pgvector installed, and the ML
+account needs permission to create/update the index table and index. Leave
+those fields blank only if you intend the index to share the main database.
+
+In the Laravel `.env` on the VM, set the same API key and local URL, then run
+the token migration before the ML snapshot:
+
+```env
+ML_RECOMMENDER_URL=http://127.0.0.1:8005
+ML_API_KEY=<same-long-secret-as-API_KEY>
+```
 
 ```bash
-docker compose up -d --force-recreate recommender-api recommender-trainer
+cd /path/to/pgpc-lib
+php artisan migrate
+php artisan config:clear
 ```
 
-For Philippine time, use:
+You do not need to stop Docker or other VM services to run this native ML
+service. Stop only an old ML service if it is already occupying port 8005.
+
+Install the Python environment, download the embedding model, refresh the
+catalog and interaction data, train/evaluate the recommender, and start the
+systemd services with one command:
+
+```bash
+sudo bash deploy/install-ubuntu.sh
+```
+
+The first catalog indexing run can take a while and needs enough disk space
+for Python packages, the embedding model cache, and database index growth.
+The script writes model artifacts under `/opt/machine_learning`; that directory
+must remain in place for the API and scheduled trainer.
+
+Check the API and service logs:
+
+```bash
+curl -fsS http://127.0.0.1:8005/health
+sudo systemctl status pgpc-ml-api pgpc-ml-trainer
+sudo journalctl -u pgpc-ml-api -n 100 --no-pager
+```
+
+Automatic retraining stays idle until enabled. To train every day at midnight
+Philippine time, set these values in `/opt/machine_learning/.env`, then restart
+the trainer:
 
 ```env
 AUTO_TRAIN_ENABLED=true
@@ -100,119 +73,86 @@ AUTO_TRAIN_TIME=00:00
 AUTO_TRAIN_TIMEZONE=Asia/Manila
 ```
 
-The trainer waits for the next configured midnight before training; it does
-not train immediately when the container starts. Use an IANA timezone such as
-`UTC`, `Asia/Manila`, or `America/New_York`.
+```bash
+sudo systemctl restart pgpc-ml-trainer
+```
 
-Both the API and trainer are included in the default Compose startup:
+Keep PostgreSQL private. For an Azure PostgreSQL server, allow its firewall
+connection from the VM and use the server hostname in `.env`; do not expose
+the database to the public internet. Only expose the Laravel web ports (usually
+80/443) through the Azure firewall and VM firewall.
+
+To update the ML service later, pull the code as its service account, reinstall
+dependencies, and restart the API:
 
 ```bash
-docker compose up -d --build
+sudo -u pgpc-ml git -C /opt/machine_learning pull
+sudo bash /opt/machine_learning/deploy/install-ubuntu.sh
 ```
 
-When `AUTO_TRAIN_ENABLED=false`, the trainer starts and remains idle. This
-keeps the complete stack represented in Compose without unexpected training.
-If you change the training setting, recreate the trainer so it receives the
-updated environment:
+The installer repeats the database snapshot and model training during updates.
+If you only want to deploy code without refreshing/retraining, install updated
+requirements in `.venv` and run `sudo systemctl restart pgpc-ml-api` instead.
 
-```bash
-docker compose up -d --force-recreate recommender-trainer
-```
+## API security
 
-### Separate PostgreSQL container on the Azure VM
-
-Because PostgreSQL runs in another container, both containers must be attached
-to the same Docker network. Set `DB_HOST` to the PostgreSQL Compose service
-name, not `localhost`. For example, if the database service is named
-`postgres`, use:
-
-```env
-DB_HOST=postgres
-DB_HOST_CONTAINER=postgres
-DB_PORT=5432
-```
-
-The database container does not need to publish port `5432` to the public
-internet. Containers communicate over the internal Docker network. If the
-database and ML service are defined in separate Compose projects, create a
-shared external network and attach both projects to it:
-
-```bash
-docker network create pgpc-internal
-```
-
-Then configure both Compose files with an external network named
-`pgpc-internal`. The ML service's `DB_HOST` must match the database service
-name or a network alias on that shared network. Verify connectivity from the
-ML container with:
-
-```bash
-docker compose run --rm recommender-api python -c \
-  "import os, psycopg2; c=psycopg2.connect(host=os.environ['DB_HOST'], \
-  port=os.environ['DB_PORT'], dbname=os.environ['DB_DATABASE'], \
-  user=os.environ['DB_USERNAME'], password=os.environ['DB_PASSWORD']); \
-  print('database connection ok'); c.close()"
-```
-
-For this architecture, use one of these values:
-
-- Azure Database for PostgreSQL: set `DB_HOST` to the Azure PostgreSQL
-  hostname.
-- PostgreSQL in another container on the same Docker network: use that
-  container's Compose service name, such as `postgres`.
-- PostgreSQL running directly on the VM: use the VM's Docker gateway address
-  or a configured host alias.
-
-Do not use `DB_HOST=localhost` inside the ML container. In a container,
-`localhost` means the ML container itself. Open only the required VM ports
-(normally `80`/`443` through a reverse proxy); do not expose PostgreSQL port
-`5432` publicly.
-
-## API security and automatic training
-
-Copy `.env.example` to `.env` and set a long random `API_KEY`. Every
-`/api/*` endpoint requires that key:
-
-```powershell
-curl -H "X-API-Key: your-secret-key" http://localhost:8005/api/metrics
-```
-
-Requests without the key receive `401`. Repeated requests are limited by
-`RATE_LIMIT_REQUESTS` during `RATE_LIMIT_WINDOW_SECONDS` per API key and
-receive `429` with a `Retry-After` header when the limit is exceeded.
-`MAX_REQUEST_BYTES` limits JSON request size. Gunicorn stops a request after
-`REQUEST_TIMEOUT_SECONDS` (30 seconds by default).
-
-Automatic training is disabled by default. To enable the separate trainer,
-set `AUTO_TRAIN_ENABLED=true` and choose `AUTO_TRAIN_TIME` and
-`AUTO_TRAIN_TIMEZONE`, then
-start the Compose profile:
-
-```powershell
-docker compose up -d recommender-trainer
-```
-
-The trainer refreshes `user_histories`, trains the SVD model, and waits for
-the configured interval. Keep it as a separate service so a slow training run
-cannot block API requests. Do not enable it until the database contains
-production-ready data.
+Every `/api/*` endpoint requires the configured `API_KEY`. Requests without
+it receive `401`; repeated requests are limited by `RATE_LIMIT_REQUESTS` during
+`RATE_LIMIT_WINDOW_SECONDS` and receive `429` with a `Retry-After` header.
+`MAX_REQUEST_BYTES` limits JSON request size. The systemd service runs Gunicorn
+with a 30-second worker timeout by default.
 
 ## PostgreSQL snapshot and recommender
 
 The model uses `dataset/interactions.csv` with these columns:
 
 ```text
-User-ID,ISBN,rating
+User-Key,ISBN,rating
 ```
 
-The machine-learning service reads only `encrypter_id`, `isbn`, and `rating`
-from `user_histories`. It never selects or exports `user_id`. Rows without an
-`encrypter_id` are excluded. Ratings are interpreted as `0` (no interaction),
-`1` (view), and `2` (borrowed).
+Each `User-Key` is a random 256-bit token stored on the Laravel account. The
+interaction snapshot exports no account ID or legacy `encrypter_id`. The
+cohort query uses user IDs only inside a distinct-student count to enforce its
+three-student minimum; it exports aggregates, not those IDs. A token is stable
+for one account, so SVD can recognize repeat interactions without receiving
+a database identifier. Ratings are `0` (no interaction), `1` (view), and
+`2` (borrowed).
 
-The snapshot preserves existing rows in `interactions.csv` and adds only
-database rows that are not already present. If the table is empty, the
-existing CSV is left unchanged.
+The database snapshot is the source of truth and replaces the training CSV,
+so existing histories are re-keyed together during token migration. If the
+database returns no interactions, snapshotting fails and leaves the old file
+untouched; `--allow-empty` explicitly writes an empty CSV. The ML service
+never reads legacy identifiers to perform the migration.
+
+The same snapshot streams catalog metadata from the library database in
+batches of 128 and writes 384-dimensional embeddings to the PostgreSQL table
+`ml_book_embeddings`. It hashes each record and only re-embeds records whose
+metadata changed, then removes records no longer in the catalog. No full
+catalog JSON or in-memory embedding matrix is created. The HNSW index returns
+the nearest books without loading the catalog into Python memory.
+
+For a large catalog, set `ML_INDEX_DB_DATABASE` and its related `ML_INDEX_DB_*`
+settings to a dedicated PostgreSQL database to isolate search storage and
+indexing load from the library database. If omitted, the index uses the `DB_*`
+database. The index database must have the pgvector extension installed and
+available to the ML database user. The metadata sent to the encoder is still
+catalog metadata (title, description, subjects, categories, and authors); this
+does not ingest or index the full contents of book files.
+
+The snapshot also builds `cohort_preferences.json` from interactions grouped
+by program/year. Cohort ISBN scores are exported only when at least three
+distinct students share that program, year, and ISBN.
+
+`POST /api/search` uses `sentence-transformers/all-MiniLM-L6-v2` embeddings and
+cosine similarity to return semantic matches. Example body:
+
+```json
+{"query":"introductory books about designing databases", "top_n":10}
+```
+
+The Laravel OPAC uses these ranked ISBNs for relevance searches and keeps its
+existing database search as a fallback when the ML API is unavailable. The
+installer downloads the embedding model into `/var/cache/pgpc-ml/huggingface`.
 
 Run these commands from this directory after the PostgreSQL settings are in
 `.env`:
@@ -234,10 +174,23 @@ The API reads those files when `POST /api/recommend` is called:
 
 ```json
 {
-  "encrypter_id": "encrypted-user-id",
-  "borrowed_books": ["9780000000000"]
+  "user_key": "random-account-token",
+  "borrowed_books": ["9780000000000"],
+  "student_context": {"program":"BSIT", "year_level":"1st Year"}
 }
 ```
+
+Recommendation scores use the existing SVD collaborative-filtering estimate,
+blended 70/30 with the matching program/year cohort's mean interaction rating
+when a cohort score exists. Otherwise SVD remains the score. Student profile
+fields are sent by Laravel only for recommendation requests and are not added
+to the interaction export; cohort data is aggregate-only.
+
+For the identity migration, first run Laravel's `php artisan migrate` so each
+account gets its random token. Then rebuild the model with
+`python train_svd_recommender.py --refresh-database` before routing requests to
+the updated Laravel and ML services. This reloads current histories under the
+new token and keeps each active student's SVD history together.
 
 `evaluate_recommender.py` writes the latest metrics to `model_metrics.json`
 and appends every evaluation to `model_metrics_history.jsonl`, so rerunning
@@ -251,13 +204,9 @@ generated conclusion. NDCG@10 is calculated
 per user from the held-out test interactions, using the true interaction
 rating as relevance and the predicted score as the ranking score.
 
-For Docker, run the snapshot and training commands inside the service:
+Run the snapshot and training commands from this directory with the venv:
 
-```powershell
-docker compose run --rm recommender-api python snapshot_user_histories.py
-docker compose run --rm recommender-api python train_svd_recommender.py
+```bash
+.venv/bin/python snapshot_user_histories.py
+.venv/bin/python train_svd_recommender.py
 ```
-
-`docker-compose.yml` maps the host PostgreSQL server as
-`host.docker.internal`; do not change the container database host to
-`localhost`.

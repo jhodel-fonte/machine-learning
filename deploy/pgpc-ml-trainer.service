@@ -1,0 +1,19 @@
+[Unit]
+Description=PGPC scheduled book recommender training
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pgpc-ml
+Group=pgpc-ml
+WorkingDirectory=/opt/machine_learning
+EnvironmentFile=/opt/machine_learning/.env
+Environment=HF_HOME=/var/cache/pgpc-ml/huggingface
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/opt/machine_learning/.venv/bin/python auto_train.py
+Restart=on-failure
+RestartSec=30
+
+[Install]
+WantedBy=multi-user.target

@@ -5,5 +5,8 @@ __pycache__
 library_svd_model.pkl
 testset.pkl
 all_books.json
+book_catalog.json
+book_catalog_embeddings.npz
+cohort_preferences.json
 model_metrics.json
 model_metrics_history.jsonl

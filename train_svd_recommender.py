@@ -19,7 +19,7 @@ def train_model(refresh_database: bool = False):
     dataset_path = BASE_DIR / "dataset" / "interactions.csv"
     print(f"Loading data from {dataset_path}...")
     df = pd.read_csv(dataset_path)
-    required_columns = {"User-ID", "ISBN", "rating"}
+    required_columns = {"User-Key", "ISBN", "rating"}
     missing_columns = required_columns.difference(df.columns)
     if missing_columns:
         raise ValueError(f"Dataset is missing columns: {sorted(missing_columns)}")
@@ -27,7 +27,7 @@ def train_model(refresh_database: bool = False):
         raise ValueError("Dataset contains no interactions.")
 
     reader = Reader(rating_scale=(0, 2))
-    data = Dataset.load_from_df(df[['User-ID', 'ISBN', 'rating']], reader)
+    data = Dataset.load_from_df(df[['User-Key', 'ISBN', 'rating']], reader)
 
 
     print("Splitting data (80/20) and applying random seed 0...")

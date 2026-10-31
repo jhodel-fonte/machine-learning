@@ -1,0 +1,19 @@
+[Unit]
+Description=PGPC book recommendation API
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pgpc-ml
+Group=pgpc-ml
+WorkingDirectory=/opt/machine_learning
+EnvironmentFile=/opt/machine_learning/.env
+Environment=HF_HOME=/var/cache/pgpc-ml/huggingface
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/opt/machine_learning/.venv/bin/gunicorn --bind 127.0.0.1:8005 --timeout ${REQUEST_TIMEOUT_SECONDS} app:app
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

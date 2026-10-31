@@ -16,6 +16,8 @@ RUN pip install --no-cache-dir --upgrade pip && \
     pip install --no-cache-dir numpy==1.26.4 && \
     pip install --no-cache-dir --no-build-isolation -r requirements.txt
 
+RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('sentence-transformers/all-MiniLM-L6-v2')"
+
 COPY . .
 
 EXPOSE 5000

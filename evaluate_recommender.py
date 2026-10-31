@@ -83,7 +83,7 @@ def get_training_data_summary():
         users = set()
         for row in reader:
             interaction_count += 1
-            users.add(row["User-ID"])
+            users.add(row["User-Key"])
 
     return {
         "training_interactions": interaction_count,
