@@ -1,11 +1,10 @@
 import argparse
-import json
 import os
-import pickle
 from pathlib import Path
 
 import pandas as pd
 from dotenv import load_dotenv
+from psycopg2.extras import execute_values
 from snapshot_user_histories import get_database_connection, snapshot_user_histories
 from surprise import Dataset, Reader, SVD, dump
 from surprise.model_selection import train_test_split
@@ -48,17 +47,28 @@ def train_model(refresh_database: bool = False):
     algo = SVD(random_state=7)
     algo.fit(trainset)
 
-    print("Saving model and test data artifacts...")
-    # Save the trained AI model
+    print("Saving trained model and held-out interactions...")
     dump.dump(str(BASE_DIR / 'library_svd_model.pkl'), algo=algo)
-    
-    # Save the 20% test dataset for the evaluator script to use later
-    with open(BASE_DIR / 'testset.pkl', 'wb') as f:
-        pickle.dump(testset, f)
-        
-    # Save a master list of all unique books 
-    with open(BASE_DIR / 'all_books.json', 'w') as f:
-        json.dump(df['isbn'].unique().tolist(), f)
+    with get_database_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """CREATE TABLE IF NOT EXISTS ml_recommender_test_interactions (
+                       user_key TEXT NOT NULL,
+                       isbn TEXT NOT NULL,
+                       rating DOUBLE PRECISION NOT NULL
+                   )"""
+            )
+            cursor.execute(
+                "CREATE INDEX IF NOT EXISTS ml_recommender_test_user_idx "
+                "ON ml_recommender_test_interactions (user_key)"
+            )
+            cursor.execute("DELETE FROM ml_recommender_test_interactions")
+            if testset:
+                execute_values(
+                    cursor,
+                    "INSERT INTO ml_recommender_test_interactions (user_key, isbn, rating) VALUES %s",
+                    [(str(uid), str(isbn), float(rating)) for uid, isbn, rating in testset],
+                )
 
     print("Training complete!")
 

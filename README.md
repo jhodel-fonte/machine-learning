@@ -51,9 +51,10 @@ sudo bash deploy/install-ubuntu.sh
 ```
 
 The first catalog indexing run can take a while and needs enough disk space
-for Python packages, the embedding model cache, and database index growth.
-The script writes model artifacts under `/opt/machine_learning`; that directory
-must remain in place for the API and scheduled trainer.
+for Python packages, the embedding model cache, and database index growth. The
+trained model stays under `/opt/machine_learning`; held-out interactions and
+catalog data are stored in PostgreSQL. The directory also contains the Python
+environment, configuration, embedding model cache, and evaluation reports.
 
 Check the API and service logs:
 
@@ -109,7 +110,7 @@ to accounts for their random 256-bit `ml_user_token`. Numeric account IDs and
 legacy `encrypter_id` values are not given to SVD. Ratings are `1` (view) and
 `2` (borrowed). Generated seeder rows are marked `is_seeded` and excluded from
 training by default; set `ML_INCLUDE_SEEDED_DATA=true` only for a local/demo
-model. No interaction CSV is used. Real checkout transactions now update the
+model. No interaction CSV or local interaction snapshot is used. Real checkout transactions now update the
 student's borrowed rating, while inside-library use is excluded.
 
 The same refresh streams catalog metadata from the library database in batches
@@ -165,8 +166,16 @@ To refresh from PostgreSQL and train in one step:
 python train_svd_recommender.py --refresh-database
 ```
 
-The training command creates `library_svd_model.pkl` and `all_books.json`.
-The API reads those files when `POST /api/recommend` is called:
+The training command saves the trained SVD model as `library_svd_model.pkl`
+and stores the held-out evaluation interactions in the PostgreSQL table
+`ml_recommender_test_interactions`. The catalog is read directly from
+`ml_book_embeddings`; it no longer writes or reads `testset.pkl` or
+`all_books.json` data snapshots. Database backups include the source histories,
+catalog index, borrowing statistics, and held-out evaluation rows.
+Keep `library_svd_model.pkl`; the API and evaluator still load this trained
+model artifact from disk.
+
+`POST /api/recommend` accepts:
 
 ```json
 {
@@ -194,9 +203,9 @@ Historical loans created before the checkout snapshot migration have no
 program/year-at-issue values, so they don't contribute to year-level scores.
 
 `evaluate_recommender.py` writes the latest SVD holdout metrics and per-signal
-comparisons to `model_metrics.json`
-and appends every evaluation to `model_metrics_history.jsonl`, so rerunning
-the model does not delete previous evaluation results. The API exposes the
+comparisons to `model_metrics.json` and appends every evaluation to
+`model_metrics_history.jsonl`, so rerunning the model does not delete previous
+evaluation results. The API exposes the
 latest result at `/api/metrics` and the complete newest-first history at
 `/api/metrics/history`. Each history record includes RMSE and MAE,
 the total number of interactions and unique users used to train the model,
@@ -214,6 +223,18 @@ recommendation quality. Year/program statistics are read from the current
 index and can include interactions that also appear in the holdout.
 NDCG@10 is calculated per user from held-out interactions, using the true
 interaction rating as relevance and the signal score as ranking score.
+
+The same report also includes `recommendation_evaluation.strategies`, which
+ranks the full indexed catalog separately for SVD-only, content-only,
+program/year-only, popularity-only, hybrid-score, hybrid-with-availability,
+and hybrid rankings with availability and novelty. Each strategy reports macro Precision@10,
+Recall@10, NDCG@10, catalog coverage, availability rate, and less-popular-item
+rate. These rankings exclude books seen in that user's training history;
+popularity and cohort scores are built from training interactions only. The
+evaluation still uses the existing random 80/20 split and current student
+program/year, treats held-out views/borrows as relevant, and has no exposure
+logs, so unborrowed candidates are not confirmed negatives. Availability is
+the current copy count, not historical availability at test time.
 
 Run the snapshot and training commands from this directory with the venv:
 

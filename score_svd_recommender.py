@@ -1,4 +1,3 @@
-import json
 import math
 import os
 from pathlib import Path
@@ -6,8 +5,8 @@ from pathlib import Path
 import numpy as np
 import psycopg2
 from sentence_transformers import SentenceTransformer
-from surprise import dump
 from dotenv import load_dotenv
+from surprise import dump
 from snapshot_user_histories import get_database_connection, get_search_index_connection
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -143,6 +142,22 @@ def _availability_counts(isbns):
             return {isbn: int(count) for isbn, count in cursor.fetchall()}
 
 
+def _catalog_isbns():
+    load_dotenv(BASE_DIR / ".env")
+    with get_search_index_connection() as connection:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """SELECT isbn FROM ml_book_embeddings
+                   WHERE isbn IS NOT NULL AND btrim(isbn) <> ''"""
+            )
+            return list(dict.fromkeys(row[0].strip() for row in cursor.fetchall()))
+
+
+def _load_model():
+    _, algo = dump.load(str(BASE_DIR / "library_svd_model.pkl"))
+    return algo
+
+
 def search_books(query, top_n=10):
     global _query_model
     try:
@@ -181,11 +196,16 @@ def get_top_recommendations(
     user_key, borrowed_books, top_n=10, program=None, year_level=None
 ):
     try:
-        _, algo = dump.load(str(BASE_DIR / 'library_svd_model.pkl'))
-        with open(BASE_DIR / 'all_books.json', 'r') as f:
-            all_books = json.load(f)
+        algo = _load_model()
     except FileNotFoundError:
-        return {"error": "Model files missing. Run training script first."}
+        return {"error": "Model file missing. Run training script first."}
+
+    try:
+        all_books = _catalog_isbns()
+    except psycopg2.Error:
+        all_books = []
+    if not all_books:
+        all_books = [algo.trainset.to_raw_iid(inner_iid) for inner_iid in range(algo.trainset.n_items)]
 
     borrowed_books = {_normalize_isbn(book) for book in (borrowed_books or [])}
     try:
