@@ -105,6 +105,31 @@ with a 30-second worker timeout by default.
 
 ## PostgreSQL snapshot and recommender
 
+For an interactive training, refresh, evaluation, and API menu, run from this
+directory on Windows or Ubuntu:
+
+```bash
+python ml_menu.py
+```
+
+On Ubuntu, use `python3 ml_menu.py` if `python` is unavailable. Choose Docker
+Compose when running the containers, or native Python for the systemd deployment.
+The native option uses `.venv` if present and runs commands as the current user;
+that user needs access to `.env`, the model files, and the database. On the
+systemd deployment, run the menu as the `pgpc-ml` service account when needed.
+The demo-data choice applies to commands launched by the menu only. Set
+`ML_INCLUDE_SEEDED_DATA=true` in `.env` as well if the API should use seeded
+histories. Catalog refresh still requires pgvector in the index database.
+Menu option 7 deletes a selected model, metrics, held-out interactions, index,
+seeded histories, or all user histories. Database actions display the target
+database and require typing `DELETE`; deleting all histories includes real
+student interactions. Rebuild the index with refresh and the model with
+training after deleting them. Restart the API after replacing a model.
+In native mode, option 8 runs the Ubuntu installer from `/opt/machine_learning`.
+Configure `.env` first, including `ML_INCLUDE_SEEDED_DATA` if using demo data;
+the installer's database refresh and training use that file rather than the
+menu's temporary demo-data choice. PostgreSQL and pgvector must already be set up.
+
 The model reads interactions directly from PostgreSQL `user_histories`, joined
 to accounts for their random 256-bit `ml_user_token`. Numeric account IDs and
 legacy `encrypter_id` values are not given to SVD. Ratings are `1` (view) and
