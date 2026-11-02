@@ -83,17 +83,16 @@ connection from the VM and use the server hostname in `.env`; do not expose
 the database to the public internet. Only expose the Laravel web ports (usually
 80/443) through the Azure firewall and VM firewall.
 
-To update the ML service later, pull the code as its service account, reinstall
-dependencies, and restart the API:
+To update the ML service later, pull the code as its service account, then
+run the update script:
 
 ```bash
 sudo -u pgpc-ml git -C /opt/machine_learning pull
-sudo bash /opt/machine_learning/deploy/install-ubuntu.sh
+sudo bash /opt/machine_learning/deploy/update-ubuntu.sh
 ```
 
-The installer repeats the database snapshot and model training during updates.
-If you only want to deploy code without refreshing/retraining, install updated
-requirements in `.venv` and run `sudo systemctl restart pgpc-ml-api` instead.
+The updater reinstalls Python requirements and service definitions, then restarts
+both services. It preserves `.env` and does not refresh data or retrain the model.
 
 ## API security
 
@@ -120,6 +119,11 @@ systemd deployment, run the menu as the `pgpc-ml` service account when needed.
 The demo-data choice applies to commands launched by the menu only. Set
 `ML_INCLUDE_SEEDED_DATA=true` in `.env` as well if the API should use seeded
 histories. Catalog refresh still requires pgvector in the index database.
+Menu option 10 evaluates the existing model and held-out interactions against
+active ISBNs read directly from the library database, then saves the results for
+the dashboard. It does not refresh embeddings, retrain the model, or change the
+held-out data; those data may include seeded interactions. Refresh the dashboard
+afterward. The content and hybrid evaluations still require the separate index.
 Menu option 7 deletes a selected model, metrics, held-out interactions, index,
 seeded histories, or all user histories. Database actions display the target
 database and require typing `DELETE`; deleting all histories includes real
@@ -129,6 +133,9 @@ In native mode, option 8 runs the Ubuntu installer from `/opt/machine_learning`.
 Configure `.env` first, including `ML_INCLUDE_SEEDED_DATA` if using demo data;
 the installer's database refresh and training use that file rather than the
 menu's temporary demo-data choice. PostgreSQL and pgvector must already be set up.
+After `git pull`, option 9 updates the native services or rebuilds the Docker
+Compose services. Both options require an existing `.env` and preserve it.
+Option 9 does not run `git pull`, refresh the index, or retrain the model.
 
 The model reads interactions directly from PostgreSQL `user_histories`, joined
 to accounts for their random 256-bit `ml_user_token`. Numeric account IDs and
@@ -137,6 +144,23 @@ legacy `encrypter_id` values are not given to SVD. Ratings are `1` (view) and
 training by default; set `ML_INCLUDE_SEEDED_DATA=true` only for a local/demo
 model. No interaction CSV or local interaction snapshot is used. Real checkout transactions now update the
 student's borrowed rating, while inside-library use is excluded.
+
+For a demo, the Laravel application can import a CSV with `date` (or `date_borrowed`) and
+`accession_number` columns:
+
+```powershell
+cd ../pgpc-lib
+php artisan demo:import-borrowings path/to/loans.csv
+```
+
+The command matches accessions to catalog ISBNs and assigns loans to existing
+student accounts in small groups based on call-number or classification
+prefixes. These assignments are synthetic, not actual borrower histories. It
+matches numeric accessions despite leading zeroes when the match is unique. It
+marks new interactions as seeded, skips unmatched or invalid rows, and leaves
+existing interactions unchanged. Repeating an import does not overwrite them.
+Set `ML_INCLUDE_SEEDED_DATA=true` in the ML `.env` before training a demo model;
+remove that setting and retrain for a model based on real interactions only.
 
 The same refresh streams catalog metadata from the library database in batches
 of 128 and writes 384-dimensional embeddings to `ml_book_embeddings`. It

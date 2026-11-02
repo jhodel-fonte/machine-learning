@@ -1,3 +1,4 @@
+import argparse
 import json
 import math
 from datetime import datetime, timezone
@@ -177,25 +178,32 @@ def evaluate_signals(algo, predictions):
     return result
 
 
-def evaluate_recommendation_strategies(algo, predictions, top_n=10):
+def evaluate_recommendation_strategies(algo, predictions, top_n=10, catalog_from_database=False):
     """Evaluate standalone and serving-style top-N rankings on the full catalog."""
     load_dotenv(BASE_DIR / ".env")
     trainset = algo.trainset
     try:
-        with get_search_index_connection() as connection:
+        with (get_database_connection() if catalog_from_database else get_search_index_connection()) as connection:
             with connection.cursor() as cursor:
-                cursor.execute(
+                cursor.execute("""SELECT bd.isbn FROM book_details bd
+                    JOIN book_datas data ON data.id = bd.book_data_id
+                    WHERE bd.isbn IS NOT NULL AND btrim(bd.isbn) <> ''
+                      AND bd.deleted_at IS NULL AND data.deleted_at IS NULL""" if catalog_from_database else
                     """SELECT isbn FROM ml_book_embeddings
                        WHERE isbn IS NOT NULL AND btrim(isbn) <> ''"""
                 )
                 catalog_rows = cursor.fetchall()
     except psycopg2.Error:
+        if catalog_from_database:
+            raise
         catalog_rows = []
     catalog = {}
     for (raw_isbn,) in catalog_rows:
         catalog.setdefault(_normalize_isbn(raw_isbn), raw_isbn.strip())
-    catalog_source = "ml_book_embeddings"
+    catalog_source = "active library catalog" if catalog_from_database else "ml_book_embeddings"
     if not catalog:
+        if catalog_from_database:
+            raise ValueError("No active catalog ISBNs found; evaluation was not saved.")
         catalog = {
             _normalize_isbn(trainset.to_raw_iid(inner_iid)): str(trainset.to_raw_iid(inner_iid)).strip()
             for inner_iid in range(trainset.n_items)
@@ -425,7 +433,7 @@ def evaluate_recommendation_strategies(algo, predictions, top_n=10):
         "held_out_relevant_items": target_count,
         "strategies": result,
         "catalog_source": catalog_source,
-        "method": "Each strategy ranks the full indexed catalog after excluding training-seen books; this is a full-catalog offline ranking, not the online candidate-generation list. Test interactions are treated as relevant; no impression or unborrowed-negative data is available. Popularity and cohort scores use training interactions only; the split remains random, and current student program/year is used.",
+        "method": ("Catalog ISBNs were read directly from the active library database. The existing model and held-out data are used; they may include seeded data. Content scores require the separate search index. " if catalog_from_database else "") + "Each strategy ranks the candidate catalog after excluding training-seen books; this is an offline ranking, not the online candidate-generation list. Test interactions are treated as relevant; no impression or unborrowed-negative data is available. Popularity and cohort scores use training interactions only; the split remains random, and current student program/year is used.",
     }
 
 
@@ -466,22 +474,22 @@ def get_testset_from_database():
             return cursor.fetchall()
 
 
-def evaluate_model():
+def evaluate_model(catalog_from_database=False):
     print("Loading saved model and test data...")
     try:
         _, algo = dump.load(str(BASE_DIR / 'library_svd_model.pkl'))
     except FileNotFoundError:
         print("Error: Run train_svd_recommender.py first.")
-        return
+        return False
 
     try:
         testset = get_testset_from_database()
     except psycopg2.Error as error:
         print(f"Error: Could not load the held-out interactions from PostgreSQL: {error}")
-        return
+        return False
     if not testset:
         print("Error: No held-out interactions found. Run train_svd_recommender.py first.")
-        return
+        return False
 
     print("Evaluating test predictions...")
     predictions = algo.test(testset)
@@ -511,9 +519,25 @@ def evaluate_model():
         "ndcg_at_10": ndcg_statistics["mean"],
         "ndcg_statistics": ndcg_statistics,
         "signal_evaluation": evaluate_signals(algo, predictions),
-        "recommendation_evaluation": evaluate_recommendation_strategies(algo, predictions),
+        "recommendation_evaluation": evaluate_recommendation_strategies(algo, predictions, catalog_from_database=catalog_from_database),
         "conclusion": build_conclusion(mae, ndcg_statistics["mean"] or 0.0),
     }
+    if catalog_from_database:
+        metrics['ndcg_at_10'] = None  # The held-out-only score is not a catalog ranking.
+        metrics.pop('ndcg_statistics')
+        if not metrics['signal_evaluation']['coverage']['content_scored_interactions']:
+            strategies = metrics['recommendation_evaluation']['strategies']
+            for name in ('content_only', 'hybrid_score', 'hybrid_with_availability', 'hybrid_availability_novelty'):
+                strategies.pop(name, None)
+            metrics['recommendation_evaluation']['method'] += ' Content and hybrid comparisons are omitted because content scores were unavailable.'
+        strategies = metrics['recommendation_evaluation']['strategies']
+        for name in ('popularity_only', 'program_year_only'):
+            result = strategies[name]
+            if result['recommended_items'] < 10 * result['users_evaluated']:
+                strategies.pop(name)
+                metrics['recommendation_evaluation']['method'] += f' {name} is omitted because it did not produce 10 items per user on average.'
+        metrics.pop('signal_evaluation')
+        metrics['conclusion'] = 'Offline catalog ranking using the existing model and held-out interactions; this is not an online recommendation test.'
     
     with open(METRICS_PATH, 'w', encoding='utf-8') as f:
         json.dump(metrics, f, indent=2)
@@ -527,6 +551,10 @@ def evaluate_model():
         f"RMSE: {metrics['rmse']}, MAE: {metrics['mae']}, "
         f"NDCG@10: {metrics['ndcg_at_10']}"
     )
+    return True
 
 if __name__ == '__main__':
-    evaluate_model()
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--catalog-from-database', action='store_true', help='Evaluate against active library catalog ISBNs.')
+    if not evaluate_model(catalog_from_database=parser.parse_args().catalog_from_database):
+        raise SystemExit(1)

@@ -42,7 +42,8 @@ def main():
         print("\n1. Train model\n2. Evaluate model\n3. Refresh catalog and statistics\n"
               "4. Refresh, train and evaluate\n5. Start/restart API\n6. Check API health\n"
               "7. Delete generated data or interactions\n"
-              "8. Install or update native Ubuntu deployment\n0. Exit")
+              "8. Install native Ubuntu deployment\n9. Apply updates after git pull\n"
+              "10. Evaluate using current database catalog\n0. Exit")
         choice = input("Choose an action: ").strip()
         if choice == "0":
             return
@@ -64,6 +65,10 @@ def main():
                         "import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:5000/health', timeout=5).read().decode())"]
                        if mode == "1" else [python, "-c", "import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:8005/health', timeout=5).read().decode())"])
             run(command, env)
+        elif choice == "10":
+            print('Uses the current catalog and the existing model and held-out data; it does not retrain the model.')
+            if script('evaluate_recommender.py', '--catalog-from-database'):
+                print('Evaluation saved. Refresh results in the system dashboard.')
         elif choice == "7":
             print("\n1. Trained model file\n2. Evaluation metrics and history files\n"
                   "3. Held-out evaluation interactions\n4. Catalog embeddings and statistics\n"
@@ -75,16 +80,30 @@ def main():
                 script("ml_cleanup.py", actions[selection])
             elif selection != "0":
                 print("Choose an option from the menu.")
-        elif choice == "8":
-            if mode != "2" or sys.platform != "linux" or ROOT != Path('/opt/machine_learning'):
-                print('Ubuntu installation requires native mode and a checkout at /opt/machine_learning.')
+        elif choice in {"8", "9"}:
+            if choice == "8" and mode != "2":
+                print('Ubuntu installation requires native mode.')
                 continue
-            print('The installer uses sudo, installs packages and services, changes ownership of /opt/machine_learning, '
-                  'refreshes the database index, retrains the model, and evaluates it.')
-            print('Configure /opt/machine_learning/.env first, including ML_INCLUDE_SEEDED_DATA if needed. '
-                  'PostgreSQL and pgvector must already be available.')
-            if input('Run the Ubuntu installer? [y/N] ').strip().lower() in {'y', 'yes'}:
-                run(['sudo', 'bash', str(ROOT / 'deploy/install-ubuntu.sh')], env)
+            if mode == "2" and (sys.platform != "linux" or ROOT != Path('/opt/machine_learning')):
+                print('Native Ubuntu deployment requires a checkout at /opt/machine_learning.')
+                continue
+            if not (ROOT / '.env').is_file():
+                print('Missing .env. Copy .env.example to .env and configure it before continuing.')
+                continue
+            print('Existing .env found; its contents will be preserved.')
+            if choice == "8":
+                print('Installation uses sudo, installs packages and services, changes directory ownership and .env permissions, '
+                      'refreshes the index, retrains the model, and evaluates it. PostgreSQL and pgvector must be ready.')
+                command = ['sudo', 'bash', str(ROOT / 'deploy/install-ubuntu.sh')]
+            elif mode == "2":
+                print('Update installs Python dependencies and service definitions, then restarts both ML services. '
+                      'It does not pull code or retrain the model.')
+                command = ['sudo', 'bash', str(ROOT / 'deploy/update-ubuntu.sh')]
+            else:
+                print('Update rebuilds and restarts both Docker Compose ML services. It does not pull code or retrain the model.')
+                command = ['docker', 'compose', 'up', '-d', '--build', 'recommender-api', 'recommender-trainer']
+            if input('Continue? [y/N] ').strip().lower() in {'y', 'yes'}:
+                run(command, env)
         else:
             print("Choose an option from the menu.")
 
