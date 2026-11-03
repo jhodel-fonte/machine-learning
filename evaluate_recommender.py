@@ -133,12 +133,12 @@ def evaluate_signals(algo, predictions):
             has_year = isbn in year_scores
             content_score = 2 * content.get(isbn, 0.0)
             year_score = 2 * year_scores.get(isbn, 0.0)
-            signals = [(svd_score, 0.5)]
+            signals = [(svd_score, 0.2)]
             if has_content:
-                signals.append((content_score, 0.3))
+                signals.append((content_score, 0.7))
                 content_count += 1
             if has_year:
-                signals.append((year_score, 0.2))
+                signals.append((year_score, 0.1))
                 year_count += 1
             combined = sum(score * weight for score, weight in signals) / sum(
                 weight for _, weight in signals
@@ -333,11 +333,11 @@ def evaluate_recommendation_strategies(algo, predictions, top_n=10, catalog_from
             svd_score = max(0.0, min(2.0, float(algo.predict(uid, raw_isbn).est)))
             content_score = content.get(isbn)
             cohort_score = year_scores.get(isbn)
-            signals = [(svd_score, 0.5)]
+            signals = [(svd_score, 0.2)]
             if content_score is not None:
-                signals.append((2 * content_score, 0.3))
+                signals.append((2 * content_score, 0.7))
             if cohort_score is not None:
-                signals.append((2 * cohort_score, 0.2))
+                signals.append((2 * cohort_score, 0.1))
             hybrid_score = sum(score * weight for score, weight in signals) / sum(
                 weight for _, weight in signals
             )

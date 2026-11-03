@@ -136,6 +136,12 @@ menu's temporary demo-data choice. PostgreSQL and pgvector must already be set u
 After `git pull`, option 9 updates the native services or rebuilds the Docker
 Compose services. Both options require an existing `.env` and preserve it.
 Option 9 does not run `git pull`, refresh the index, or retrain the model.
+In Docker Compose mode, option 11 builds the images, refreshes the catalog,
+trains and evaluates the model, and starts both ML services in one action. It
+uses the menu's demo-data choice for those commands. Install and start Docker
+with Compose first, configure `.env`, and ensure PostgreSQL, pgvector, and the
+external `pgpc-internal` Docker network are ready. The refresh and training
+update database data and generated model and evaluation files.
 
 The model reads interactions directly from PostgreSQL `user_histories`, joined
 to accounts for their random 256-bit `ml_user_token`. Numeric account IDs and
@@ -234,9 +240,11 @@ model artifact from disk.
 }
 ```
 
-Recommendation ranking combines SVD (50%), similarity to the student's
-interaction metadata profile (30%), and year/program borrowing relevance
-(20%); missing signals are renormalized. Borrowed books weigh twice as much as
+Recommendation ranking combines SVD (20%), similarity to the student's
+interaction metadata profile (70%), and year/program borrowing relevance
+(10%); missing signals are renormalized. The content profile uses current
+history on each request, including author names in indexed book metadata.
+Borrowed books weigh twice as much as
 views in the content profile. Up to 30% of the results may be less-borrowed
 titles, provided their relevance is close to the best candidates. Current
 available-copy count is a tie-breaker and is returned with each result. Laravel

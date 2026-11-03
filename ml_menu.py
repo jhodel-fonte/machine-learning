@@ -43,7 +43,7 @@ def main():
               "4. Refresh, train and evaluate\n5. Start/restart API\n6. Check API health\n"
               "7. Delete generated data or interactions\n"
               "8. Install native Ubuntu deployment\n9. Apply updates after git pull\n"
-              "10. Evaluate using current database catalog\n0. Exit")
+              "10. Evaluate using current database catalog\n11. Install Docker deployment\n0. Exit")
         choice = input("Choose an action: ").strip()
         if choice == "0":
             return
@@ -69,6 +69,19 @@ def main():
             print('Uses the current catalog and the existing model and held-out data; it does not retrain the model.')
             if script('evaluate_recommender.py', '--catalog-from-database'):
                 print('Evaluation saved. Refresh results in the system dashboard.')
+        elif choice == "11":
+            if mode != "1":
+                print('Docker installation requires Docker Compose mode.')
+            elif not (ROOT / '.env').is_file():
+                print('Missing .env. Copy .env.example to .env and configure it before continuing.')
+            else:
+                print('Building Docker images, refreshing data, training and evaluating the model, then starting both services. '
+                      'Docker, the pgpc-internal network, PostgreSQL and pgvector must already be ready.')
+                if (run(['docker', 'compose', 'build'], env)
+                        and script('snapshot_user_histories.py')
+                        and script('train_svd_recommender.py')
+                        and script('evaluate_recommender.py')):
+                    run(['docker', 'compose', 'up', '-d', 'recommender-api', 'recommender-trainer'], env)
         elif choice == "7":
             print("\n1. Trained model file\n2. Evaluation metrics and history files\n"
                   "3. Held-out evaluation interactions\n4. Catalog embeddings and statistics\n"

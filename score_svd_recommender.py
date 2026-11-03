@@ -236,11 +236,11 @@ def get_top_recommendations(
     for book in candidates:
         isbn = _normalize_isbn(book)
         svd_score = max(0.0, min(2.0, float(algo.predict(uid=user_key, iid=book).est)))
-        signals = [(svd_score, 0.5)]
+        signals = [(svd_score, 0.2)]
         if isbn in content_scores:
-            signals.append((2 * content_scores[isbn], 0.3))
+            signals.append((2 * content_scores[isbn], 0.7))
         if isbn in year_scores:
-            signals.append((2 * year_scores[isbn], 0.2))
+            signals.append((2 * year_scores[isbn], 0.1))
         score = sum(value * weight for value, weight in signals) / sum(weight for _, weight in signals)
         available_count = availability.get(isbn, 0)
         recommendations.append({

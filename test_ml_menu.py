@@ -7,6 +7,33 @@ import ml_menu
 
 
 class MenuTest(unittest.TestCase):
+    @patch('ml_menu.run', return_value=True)
+    @patch('builtins.input', side_effect=['1', 'y', '11', '0'])
+    def test_docker_install_builds_trains_and_starts_services(self, _input, run):
+        with patch.object(Path, 'is_file', return_value=True):
+            ml_menu.main()
+        commands = [call.args[0] for call in run.call_args_list]
+        self.assertEqual(commands[0], ['docker', 'compose', 'build'])
+        self.assertEqual([command[-1] for command in commands[1:4]], [
+            'snapshot_user_histories.py', 'train_svd_recommender.py', 'evaluate_recommender.py',
+        ])
+        self.assertTrue(all('ML_INCLUDE_SEEDED_DATA=true' in command for command in commands[1:4]))
+        self.assertEqual(commands[4], ['docker', 'compose', 'up', '-d', 'recommender-api', 'recommender-trainer'])
+
+    @patch('ml_menu.run', side_effect=[True, False])
+    @patch('builtins.input', side_effect=['1', 'n', '11', '0'])
+    def test_docker_install_stops_on_failure(self, _input, run):
+        with patch.object(Path, 'is_file', return_value=True):
+            ml_menu.main()
+        self.assertEqual(run.call_count, 2)
+
+    @patch('ml_menu.run')
+    @patch('builtins.input', side_effect=['1', 'n', '11', '0'])
+    def test_docker_install_requires_env(self, _input, run):
+        with patch.object(Path, 'is_file', return_value=False):
+            ml_menu.main()
+        run.assert_not_called()
+
     @patch('ml_menu.run')
     @patch('builtins.input', side_effect=['1', 'n', '10', '0'])
     def test_database_catalog_evaluation_uses_existing_model(self, _input, run):
