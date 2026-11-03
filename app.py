@@ -115,6 +115,12 @@ def recommend():
     if not isinstance(borrowed_books, list):
         return jsonify({"error": "borrowed_books must be an array"}), 400
 
+    interaction = data.get('interaction')
+    if interaction is not None and (not isinstance(interaction, dict) or
+            not isinstance(interaction.get('isbn'), str) or
+            not interaction['isbn'].strip() or len(interaction['isbn']) > 32):
+        return jsonify({"error": "interaction isbn must be a nonempty string of 32 characters or fewer"}), 400
+
     # Call the scoring script
     student_context = data.get('student_context', {})
     if not isinstance(student_context, dict):
@@ -125,7 +131,8 @@ def recommend():
         return jsonify({"error": "student_context program and year_level must be strings of 100 characters or fewer"}), 400
 
     top_10 = get_top_recommendations(
-        user_key, borrowed_books, top_n=10, program=program, year_level=year_level
+        user_key, borrowed_books, top_n=10, program=program, year_level=year_level,
+        viewed_isbn=interaction['isbn'] if interaction else None,
     )
     
     if isinstance(top_10, dict) and "error" in top_10:

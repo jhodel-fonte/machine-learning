@@ -193,7 +193,7 @@ def search_books(query, top_n=10):
 
 
 def get_top_recommendations(
-    user_key, borrowed_books, top_n=10, program=None, year_level=None
+    user_key, borrowed_books, top_n=10, program=None, year_level=None, viewed_isbn=None
 ):
     try:
         algo = _load_model()
@@ -208,8 +208,13 @@ def get_top_recommendations(
         all_books = [algo.trainset.to_raw_iid(inner_iid) for inner_iid in range(algo.trainset.n_items)]
 
     borrowed_books = {_normalize_isbn(book) for book in (borrowed_books or [])}
+    if viewed_isbn:
+        borrowed_books.add(_normalize_isbn(viewed_isbn))
     try:
-        content_scores = _content_scores(user_key, all_books)
+        content_scores = (_content_scores(user_key, all_books, history_override=[(viewed_isbn, 1)])
+                          if viewed_isbn else {})
+        if not content_scores:
+            content_scores = _content_scores(user_key, all_books)
     except psycopg2.Error:
         content_scores = {}
     try:
@@ -237,8 +242,8 @@ def get_top_recommendations(
         isbn = _normalize_isbn(book)
         svd_score = max(0.0, min(2.0, float(algo.predict(uid=user_key, iid=book).est)))
         signals = [(svd_score, 0.2)]
-        if isbn in content_scores:
-            signals.append((2 * content_scores[isbn], 0.7))
+        if content_scores:
+            signals.append((2 * content_scores.get(isbn, 0), 0.7))
         if isbn in year_scores:
             signals.append((2 * year_scores[isbn], 0.1))
         score = sum(value * weight for value, weight in signals) / sum(weight for _, weight in signals)

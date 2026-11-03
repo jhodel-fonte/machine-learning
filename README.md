@@ -236,14 +236,18 @@ model artifact from disk.
 {
   "user_key": "random-account-token",
   "borrowed_books": ["9780000000000"],
-  "student_context": {"program":"BSIT", "year_level":"1st Year"}
+  "student_context": {"program":"BSIT", "year_level":"1st Year"},
+  "interaction": {"isbn":"9780000000001", "rating":1}
 }
 ```
 
 Recommendation ranking combines SVD (20%), similarity to the student's
 interaction metadata profile (70%), and year/program borrowing relevance
 (10%); missing signals are renormalized. The content profile uses current
-history on each request, including author names in indexed book metadata.
+history on each request, including author names in indexed book metadata. When
+an interaction ISBN is supplied, its indexed metadata drives content similarity
+immediately, even for a first view; if unavailable, the history profile is used.
+The opened book is excluded from that request's recommendations.
 Borrowed books weigh twice as much as
 views in the content profile. Up to 30% of the results may be less-borrowed
 titles, provided their relevance is close to the best candidates. Current
